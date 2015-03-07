@@ -674,7 +674,7 @@ sub new {
   my $by_index = {};
 
   $gdb->ensure_python_initialized;
-  my $python_string = $gdb->execute_command_to_string(qq{py print_expression('$string')}, 0);
+  my $python_string = $gdb->execute_command_to_string(qq{py print print_expression('$string')}, 0);
 
   {
     my $e = sub {
@@ -1213,16 +1213,16 @@ if (0) {
     $gdb->read_type($type);
   }
   $gdb->guess_macro_type('TYPE_OBJFILE', $main::PERL_LINESPEC);
-  
+
   # $gdb->handle_symbol('ffi_pl_closure_call', 1);
   # $gdb->handle_symbol('ffi_pl_record_accessor_uint8', 1);
   # $gdb->handle_symbol('ffi_pl_closure');
-  
+
   FFI::Platypus::GDB::Fragment::show_fragments();
 }
 
 package Boot0GDB;
 
-my $gdb = Boot0GDB->new;
+$Boot0GDB::gdb = Boot0GDB->new;
 
 1;
