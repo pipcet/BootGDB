@@ -716,6 +716,7 @@ sub new {
 
 package Boot0GDB;
 use FFI::Platypus;
+use Carp qw(croak);
 
 sub opaque {
   return 'opaque';
