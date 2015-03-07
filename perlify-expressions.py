@@ -42,7 +42,7 @@ def print_expression_rec(t):
 
 def print_expression(expr):
     t = gdb.parse_expression(expr)
-    return "$expr->('" + expr + "', " + print_expression_rec(t.opcodes()[0]) + ", " + expr.address() + ");\n"
+    return "$expr->('" + expr + "', " + print_expression_rec(t.opcodes()[0]) + ", " + str(t.address()) + ");\n"
 
 # this is C-specific. Most other languages do not have tags, though.
 def real_name(t):
