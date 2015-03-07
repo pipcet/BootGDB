@@ -739,6 +739,18 @@ sub closure {
   return $self->{ffi}->closure(@args);
 }
 
+sub method($) {
+  my ($self) = @_;
+
+  return sub {
+    my($xsub, $self2, @args) = @_;
+
+    croak unless $self == $self2;
+
+    return $xsub->(@args);
+  };
+}
+
 sub new {
   my($class) = @_; # no other arguments, since we're only run by one gdb process
   my $self = bless {}, $class;
@@ -748,14 +760,14 @@ sub new {
   $ffi->type(opaque => expression);
   $ffi->type(opaque => ui_file);
 
-  $ffi->attach('parse_expression', ['string'] => 'expression');
-  $ffi->attach('mem_fileopen' => [] => opaque);
+  $ffi->attach('parse_expression', ['string'] => 'expression', method($self));
+  $ffi->attach('mem_fileopen' => [] => opaque, method($self));
 #  $ffi->attach('print_subexp_callback' => [ui_file, 'int*', expression, 'int', '(ui_file, int*, opaque, int)->void'] => void);
-  $ffi->attach('print_subexp_callback' => [ui_file, 'int*', expression, 'int', '(ui_file, opaque, opaque, int)->void'] => void);
-  $ffi->attach('ui_file_xstrdup', ['ui_file', 'opaque'] => 'string');
-  $ffi->attach('ui_file_write', ['ui_file', 'string', 'size_t'] => 'void');
-  $ffi->attach('ui_file_delete', ['ui_file'] => 'void');
-  $ffi->attach('execute_command_to_string', ['string', 'int'] => 'string');
+  $ffi->attach('print_subexp_callback' => [ui_file, 'int*', expression, 'int', '(ui_file, opaque, opaque, int)->void'] => void, method($self));
+  $ffi->attach('ui_file_xstrdup', ['ui_file', 'opaque'] => 'string', method($self));
+  $ffi->attach('ui_file_write', ['ui_file', 'string', 'size_t'] => 'void', method($self));
+  $ffi->attach('ui_file_delete', ['ui_file'] => 'void', method($self));
+  $ffi->attach('execute_command_to_string', ['string', 'int'] => 'string', method($self));
 
   warn execute_command_to_string("p *(int *)0", 0);
 }
