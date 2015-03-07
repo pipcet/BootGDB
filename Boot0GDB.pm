@@ -614,7 +614,7 @@ sub c_emit {
   }
 }
 
-package Boot0GDB::Subexpression;
+package Boot0GDB::SubExpression;
 
 sub new {
   my($class, $gdb, $address, $i) = @_;
@@ -623,6 +623,7 @@ sub new {
   $self->{address} = $address;
   $self->{i} = 0;
 
+  return $self;
 }
 
 sub subexp {
@@ -694,10 +695,10 @@ sub new {
     };
 
     my $expr = sub {
-      my ($expression, $rest, $address) = @_;
+      my ($expression, $rest, $addr) = @_;
 
-      $address = $gdb->cast('long' => 'expression', $address)
-	  if defined $address;
+      $address = $gdb->cast('long' => 'expression', $addr)
+	  if defined $addr;
     };
 
     eval $python_string;
