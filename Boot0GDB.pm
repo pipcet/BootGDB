@@ -751,6 +751,22 @@ sub method($) {
   };
 }
 
+sub ensure_python_initialized {
+  my($self) = @_;
+
+  return 1 if $self->{python_initialized};
+
+  warn;
+  my $result = $self->execute_command_to_string(qq{py import gdb});
+  warn $result;
+  $result = $self->execute_command_to_string(qq{py exec file('./perlify-expressions.py')});
+  warn $result;
+
+  $self->{python_initialized} = 1;
+
+  return 1;
+}
+
 sub new {
   my($class) = @_; # no other arguments, since we're only run by one gdb process
   my $self = bless {}, $class;
