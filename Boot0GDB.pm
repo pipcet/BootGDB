@@ -740,6 +740,12 @@ sub closure {
   return $self->{ffi}->closure(@args);
 }
 
+sub cast {
+  my($self, @args) = @_;
+
+  return $self->{ffi}->cast(@args);
+}
+
 sub method($) {
   my ($self) = @_;
 
