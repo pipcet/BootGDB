@@ -791,7 +791,7 @@ sub new {
   $ffi->attach('parse_expression', ['string'] => 'expression', method($self));
   $ffi->attach('mem_fileopen' => [] => opaque, method($self));
 #  $ffi->attach('print_subexp_callback' => [ui_file, 'int*', expression, 'int', '(ui_file, int*, opaque, int)->void'] => void);
-  $ffi->attach('print_subexp_callback' => [ui_file, 'int*', expression, 'int', '(ui_file, opaque, opaque, int)->void'] => void, method($self));
+  $ffi->attach('print_subexp_callback' => [ui_file, 'int*', expression, 'int', '(ui_file, int *, opaque, int)->void'] => void, method($self));
   $ffi->attach('ui_file_xstrdup', ['ui_file', 'opaque'] => 'string', method($self));
   $ffi->attach('ui_file_write', ['ui_file', 'string', 'size_t'] => 'void', method($self));
   $ffi->attach('ui_file_delete', ['ui_file'] => 'void', method($self));
