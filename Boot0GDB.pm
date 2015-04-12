@@ -677,6 +677,8 @@ sub new {
   $gdb->ensure_python_initialized;
   my $python_string = $gdb->execute_command_to_string(qq{py print print_expression('$string')}, 0);
 
+  warn "python string $python_string";
+
   {
     my $e = sub {
       my ($opcode, $rest) = @_;
@@ -705,6 +707,8 @@ sub new {
 
     die $@ if $@;
   }
+
+  warn "address $address";
 
   my $ret = $class->SUPER::new($gdb, $address, 0);
 
@@ -764,11 +768,8 @@ sub ensure_python_initialized {
 
   return 1 if $self->{python_initialized};
 
-  warn;
   my $result = $self->execute_command_to_string(qq{py import gdb});
-  warn $result;
   $result = $self->execute_command_to_string(qq{py exec file('./perlify-expressions.py')});
-  warn $result;
 
   $self->{python_initialized} = 1;
 
@@ -793,7 +794,11 @@ sub new {
   $ffi->attach('ui_file_delete', ['ui_file'] => 'void', method($self));
   $ffi->attach('execute_command_to_string', ['string', 'int'] => 'string', method($self));
 
-  warn execute_command_to_string("p *(int *)0", 0);
+  my $e = Boot0GDB::Expression->new($self, '*(int *)0');
+
+  warn $self->execute_command_to_string("p *(int *)0", 0);
+
+  return $self;
 }
 
 package FFI::Platypus::GDB;
