@@ -629,7 +629,7 @@ sub new {
 sub subexp {
   my ($self, $i) = @_;
 
-  my $ret = FFI::Platypus::GDB::Bootstrap::NativeGDBSubexpression->new($self->{gdb}, $self->{address}, $i);
+  my $ret = Boot0GDB::SubExpression->new($self->{gdb}, $self->{address}, $i);
 
   $ret->{expression} = $self->{expression};
   $ret->{expression} = $self unless defined $ret->{expression};
@@ -640,7 +640,7 @@ sub subexp {
 sub print_with_callback {
   my ($self, $cb, $prec) = @_;
   $prec = 0 if !defined $prec;
-  my $stream = $self->{mem_fileopen}->();
+  my $stream = $self->{gdb}->mem_fileopen;
 
   my $repl = $cb->($self);
 
@@ -648,19 +648,22 @@ sub print_with_callback {
     return $repl;
   } else {
     my $gdb_closure = $self->{gdb}->closure(sub {
-      my ($stream, $ip, $address, $prec) = @_;
+      my ($address, $ip, $stream, $prec) = @_;
+      warn "position $$ip";
       my $subexp = $self->subexp($$ip);
       my $string = $self->print_with_callback($cb, $prec);
 
-      $self->{ui_file_write}->($stream, $string, length($string));
+      $self->ui_file_write($stream, $string, length($string));
     });
 
     my $i = $self->{i};
-    $self->{print_subexp_callback}->($stream, \$i, $self->{address}, $prec, $gdb_closure);
+    $self->{gdb}->print_subexp_callback($self->{address}, \$i, $stream, $prec, $gdb_closure);
 
-    my $ret = $self->{ui_file_xstrdup}->($stream, undef);
+    my $ret = $self->{gdb}->ui_file_xstrdup($stream, undef);
 
-    $self->{ui_file_delete}->($stream);
+    $self->{gdb}->ui_file_delete($stream);
+
+    warn "ret $ret";
 
     return $ret;
   }
@@ -794,9 +797,16 @@ sub new {
   $ffi->attach('ui_file_delete', ['ui_file'] => 'void', method($self));
   $ffi->attach('execute_command_to_string', ['string', 'int'] => 'string', method($self));
 
-  my $e = Boot0GDB::Expression->new($self, '*(int *)0');
 
-  warn $self->execute_command_to_string("p *(int *)0", 0);
+
+  my $e = Boot0GDB::Expression->new($self, '(int)(((int *)$x)+1)');
+
+  warn "e $e";
+  my $out = $e->print_with_callback(sub { return; }, 0);
+
+  warn "out $out";
+
+  warn $self->execute_command_to_string("p (int)(((int *)0)+1)", 0);
 
   return $self;
 }
