@@ -621,7 +621,7 @@ sub new {
   my $self = bless {}, $class;
   $self->{gdb} = $gdb;
   $self->{address} = $address;
-  $self->{i} = 0;
+  $self->{i} = $i;
 
   return $self;
 }
@@ -638,7 +638,7 @@ sub subexp {
 }
 
 sub print_with_callback {
-  my ($self, $cb, $prec) = @_;
+  my ($self, $ip0, $cb, $prec) = @_;
   $prec = 0 if !defined $prec;
   my $stream = $self->{gdb}->mem_fileopen;
 
@@ -649,21 +649,27 @@ sub print_with_callback {
   } else {
     my $gdb_closure = $self->{gdb}->closure(sub {
       my ($address, $ip, $stream, $prec) = @_;
-      warn "position $$ip";
-      my $subexp = $self->subexp($$ip);
-      my $string = $self->print_with_callback($cb, $prec);
+      my $i0 = $$ip;
+      my $subexp = $self->subexp($i0);
+      my $string = $subexp->print_with_callback($ip, $cb, $prec);
+      my $i1 = $$ip;
+      $subexp->{i1} = $i1;
 
-      $self->ui_file_write($stream, $string, length($string));
+      $self->{gdb}->ui_file_write($stream, $string, length($string));
+
+      return $i1 - $i0;
     });
 
-    my $i = $self->{i};
-    $self->{gdb}->print_subexp_callback($self->{address}, \$i, $stream, $prec, $gdb_closure);
+    my $pc0 = $$ip0;
+
+    my $pc = $pc0;
+    $self->{gdb}->print_subexp_callback($self->{address}, $ip0, $stream, $prec, $gdb_closure);
+
+    my $pc1 = $$ip0;
 
     my $ret = $self->{gdb}->ui_file_xstrdup($stream, undef);
 
     $self->{gdb}->ui_file_delete($stream);
-
-    warn "ret $ret";
 
     return $ret;
   }
@@ -791,7 +797,7 @@ sub new {
   $ffi->attach('parse_expression', ['string'] => 'expression', method($self));
   $ffi->attach('mem_fileopen' => [] => opaque, method($self));
 #  $ffi->attach('print_subexp_callback' => [ui_file, 'int*', expression, 'int', '(ui_file, int*, opaque, int)->void'] => void);
-  $ffi->attach('print_subexp_callback' => [ui_file, 'int*', expression, 'int', '(ui_file, int *, opaque, int)->void'] => void, method($self));
+  $ffi->attach('print_subexp_callback' => [ui_file, 'int*', expression, 'int', '(ui_file, int *, opaque, int)->int'] => 'int', method($self));
   $ffi->attach('ui_file_xstrdup', ['ui_file', 'opaque'] => 'string', method($self));
   $ffi->attach('ui_file_write', ['ui_file', 'string', 'size_t'] => 'void', method($self));
   $ffi->attach('ui_file_delete', ['ui_file'] => 'void', method($self));
@@ -799,10 +805,13 @@ sub new {
 
 
 
-  my $e = Boot0GDB::Expression->new($self, '(int)(((int *)$x)+1)');
+#  my $e = Boot0GDB::Expression->new($self, '(int)(((int *)$x)+1)');
+
+  my $e = Boot0GDB::Expression->new($self, '$x?$y:$z');
 
   warn "e $e";
-  my $out = $e->print_with_callback(sub { return; }, 0);
+  my $i = 0;
+  my $out = $e->print_with_callback(\$i, sub { return; }, 0);
 
   warn "out $out";
 
