@@ -124,6 +124,20 @@ def print_macro(name, linespec):
     exp = gdb.parse_expression(s);
     return print_expression_rec(exp.opcodes()[0])
 
+def macro_string(name, linespec):
+    macros = gdb.macros(gdb.decode_line(linespec)[1][0])
+    args = []
+    m = macros[name]
+    if m.argc() is not None:
+        for i in range(m.argc()):
+            args.append("arg" + str(i))
+    try:
+        s = m.expand(args, gdb.decode_line(linespec)[1][0])
+        return s
+
+    except Exception:
+        return ""
+
 def macro_expression(name, linespec):
     macros = gdb.macros(gdb.decode_line(linespec)[1][0])
     args = []
