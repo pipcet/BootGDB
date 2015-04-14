@@ -117,19 +117,43 @@ def print_macro(name, linespec):
     macros = gdb.macros(gdb.decode_line(linespec)[1][0])
     args = []
     m = macros[name]
-    for i in range(m.argc()):
-        args.append("$x" + str(i))
+    if m.argc() is not None:
+        for i in range(m.argc()):
+            args.append("$x" + str(i))
     s = m.expand(args, gdb.decode_line(linespec)[1][0])
     exp = gdb.parse_expression(s);
     return print_expression_rec(exp.opcodes()[0])
+
+def macro_expression(name, linespec):
+    macros = gdb.macros(gdb.decode_line(linespec)[1][0])
+    args = []
+    m = macros[name]
+    if m.argc() is not None:
+        for i in range(m.argc()):
+            args.append("$x" + str(i))
+    try:
+        s = m.expand(args, gdb.decode_line(linespec)[1][0])
+        if s == "":
+            return ""
+        exp = print_expression(s)
+        return exp
+
+    except Exception:
+        return ""
 
 def print_macro_type(name, linespec):
     macros = gdb.macros(gdb.decode_line(linespec)[1][0])
     args = []
     m = macros[name]
-    for i in range(m.argc()):
-        args.append("$x" + str(i))
-    s = m.expand(args, gdb.decode_line(linespec)[1][0])
-    exp = gdb.parse_expression(s);
-    t = exp.evaluate_type()
-    return print_type_rec(t, True) + "\n"
+    if m.argc() is not None:
+        for i in range(m.argc()):
+            args.append("$x" + str(i))
+    try:
+        s = m.expand(args, gdb.decode_line(linespec)[1][0])
+        if s == "":
+            return ""
+        exp = gdb.parse_expression(s)
+        t = exp.evaluate_type()
+        return print_type_rec(t, True) + "\n"
+    except Exception:
+        return ""

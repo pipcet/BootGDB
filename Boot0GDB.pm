@@ -165,6 +165,13 @@ my $expr_ops = {
     return $subexps[1]->intersection_type_cast($subexps[2]);
   },
 
+  BINOP_COMMA => sub {
+    my ($attr) = @_;
+    my @subexps = @{$attr->{subexps}};
+
+    return $subexps[1];
+  },
+
   STRUCTOP_PTR => sub {
     my ($attr) = @_;
     my $value = $attr->{value};
@@ -193,6 +200,12 @@ my $expr_ops = {
     my $type = PartialType->new;
 
     return $type;
+  },
+
+  OP_VAR_VALUE => sub {
+    my ($attr) = @_;
+
+    return PartialType->new;
   },
 
   UNOP_CAST_TYPE => sub {
@@ -378,6 +391,18 @@ my $type_ops = {
 
     return $self;
   },
+  RANGE => sub {
+    my($attr) = @_;
+    my($self) = GDBType->new_int($attr->{sizeof} * 8);
+
+    return $self;
+  },
+  ARRAY => sub {
+    my($attr) = @_;
+    my($self) = GDBType->new_pointer($attr->{target});
+
+    return $self;
+  },
   STRUCT => sub {
     my($attr) = @_;
     my($self) = GDBType->new_kind_target('struct', undef);
@@ -407,6 +432,16 @@ my $type_ops = {
     }
 
     return $self;
+  },
+  FUNC => sub {
+    my($attr) = @_;
+    my($self) = GDBType->new_int(8 * 8);
+
+    return $self;
+  },
+  TYPEDEF => sub {
+    my($attr) = @_;
+    return $attr->{target};
   },
   name => sub {
     my($name) = @_;
@@ -502,6 +537,8 @@ sub emit {
 }
 
 sub fragment($) {
+  warn $_[0];
+  return $_[0];
 }
 
 my %gdb_opcode_to_code;
@@ -510,7 +547,7 @@ my @gdb_opcodes;
 sub init {
   my($class, $gdb) = @_;
 
-  my $output = $gdb->run_command('py print gdb.opcodes');
+  my $output = $gdb->execute_command_to_string('py print gdb.opcodes');
   $output =~ s/, <NULL>//g;
   my $i = 0;
   my @opcodes = @{eval fragment $output};
@@ -648,7 +685,7 @@ sub print_with_callback {
     return $repl;
   } else {
     my $gdb_closure = $self->{gdb}->closure(sub {
-      my ($address, $ip, $stream, $prec) = @_;
+      my ($address, $ip, $opcode, $stream, $prec) = @_;
       my $i0 = $$ip;
       my $subexp = $self->subexp($i0);
       my $string = $subexp->print_with_callback($ip, $cb, $prec);
@@ -731,6 +768,12 @@ sub new {
 package Boot0GDB;
 use FFI::Platypus;
 use Carp qw(croak);
+use Carp::Always;
+
+sub fragment($) {
+  warn $_[0];
+  return $_[0];
+}
 
 sub opaque {
   return 'opaque';
@@ -785,6 +828,150 @@ sub ensure_python_initialized {
   return 1;
 }
 
+sub macro_names {
+  my($self) = @_;
+  my $linespec = main::perl_linespec;
+
+  warn "linespec $linespec";
+
+  my $mlist = $self->execute_command_to_string(qq{py for v in gdb.macros(gdb.decode_line('${linespec}')[1][0]): print(v)});
+
+  my @macros = split "\n", $mlist;
+
+  return @macros;
+}
+
+sub guess_macro_type
+{
+  my ($self, $macro) = @_;
+  my $linespec = main::perl_linespec;
+  my $internals = {};
+
+  my %e = %{PartialType->ops($internals)};
+  my %t = %{GDBType->ops($self->{types})};
+
+  my $e = sub {
+    my ($opcode, @rest) = @_;
+
+    unless ($e{$opcode}) {
+      return PartialType->new unless $rest[0]->{type};
+      return $rest[0]->{type};
+    }
+
+    $e{$opcode}->(@rest);
+  };
+
+  my $t = sub {
+    my($kind, @rest) = @_;
+    die "unknown kind $kind" unless $t{$kind};
+    $t{$kind}->(@rest);
+  };
+  my $exp = $self->execute_command_to_string("py print macro_expression('$macro', '$linespec')");
+  my $expr = sub {
+    my ($exp0, $expr, $address) = @_;
+
+    return $expr;
+  };
+
+  return $self if $exp eq "";
+
+  my $partial_type = eval fragment $exp;
+
+  die $@ if $@;
+
+  print Dumper($partial_type);
+  return unless defined $partial_type;
+  print $partial_type->describe;
+
+  for my $name (keys %{$internals}) {
+    print "\n\n";
+
+    print Dumper($internals->{$name});
+    print $internals->{$name}->describe;
+  }
+
+  for my $internal (keys %{$internals}) {
+    my @potential_types;
+    for my $type (keys %{$self->{types}}) {
+      next if $self->{types}->{$type}->{kind} eq 'name';
+
+      my $matches =  $internals->{$internal}->match($self->{types}->{$type});
+
+      $matches = 'undef' unless defined $matches;
+
+      print "$internal matches $type: " . $matches . "\n";
+
+      push @potential_types, $self->{types}->{$type} if $matches eq 'undef';
+    }
+
+    for my $type (@potential_types) {
+      # this looks C-specific, but it's actually not, as long as we
+      # set language to c and back afterwards. A better solution is on
+      # its way, though.
+      $self->execute_command_to_string("p \$"."$internal = typeof(" . $type->{name}. ")");
+
+      my $expr = $self->execute_command_to_string("py print macro_expression('$macro', '$linespec')");
+
+    }
+  }
+
+  return $self;
+}
+
+use Data::Dumper;
+
+sub read_type
+{
+  my($self, $name) = @_;
+
+  $self->{types} = {} unless $self->{types};
+
+  my %t = %{GDBType->ops($self->{types})};
+  my $t = sub {
+    my($kind, @rest) = @_;
+    die "unknown kind $kind" unless $t{$kind};
+    $t{$kind}->(@rest);
+  };
+  my $def = sub { $_[1]->{name} = $_[0]; $self->{types}->{$_[0]} = $_[1]; return $_[1]; };
+
+  my $eval = $self->execute_command_to_string("py print print_type('$name')");
+
+  return $self if $eval eq "";
+
+  my $t = eval fragment $eval;
+
+  die $@ if $@;
+
+  print $t->describe;
+
+  return $self;
+}
+
+sub read_type_expression
+{
+  my($self, $name) = @_;
+
+  $self->{types} = {} unless $self->{types};
+
+  my $expr = sub { $_[1]->{name} = $_[0]; $self->{types}->{$_[0]} = $_[1]; return $_[1]; };
+
+  my %e = (OP_TYPE => sub { $_[0]->{type} });
+  my %t = %{GDBType->ops($self->{types})};
+  my $def = sub { $_[1]->{name} = $_[0]; $self->{types}->{$_[0]} = $_[1]; return $_[1]; };
+
+  my $eval = $self->execute_command_to_string("py print print_expression('$name')");
+
+  return $self if $eval eq "";
+
+  my $t = eval fragment $eval;
+
+  die $@ if $@;
+
+  print $t->describe;
+
+  return $self;
+}
+
 sub new {
   my($class) = @_; # no other arguments, since we're only run by one gdb process
   my $self = bless {}, $class;
@@ -797,30 +984,48 @@ sub new {
   $ffi->attach('parse_expression', ['string'] => 'expression', method($self));
   $ffi->attach('mem_fileopen' => [] => opaque, method($self));
 #  $ffi->attach('print_subexp_callback' => [ui_file, 'int*', expression, 'int', '(ui_file, int*, opaque, int)->void'] => void);
-  $ffi->attach('print_subexp_callback' => [ui_file, 'int*', expression, 'int', '(ui_file, int *, opaque, int)->int'] => 'int', method($self));
+  $ffi->attach('print_subexp_callback' => [ui_file, 'int*', expression, 'int', '(ui_file, int *, int, opaque, int)->int'] => 'int', method($self));
   $ffi->attach('ui_file_xstrdup', ['ui_file', 'opaque'] => 'string', method($self));
   $ffi->attach('ui_file_write', ['ui_file', 'string', 'size_t'] => 'void', method($self));
   $ffi->attach('ui_file_delete', ['ui_file'] => 'void', method($self));
   $ffi->attach('execute_command_to_string', ['string', 'int'] => 'string', method($self));
 
-
-
 #  my $e = Boot0GDB::Expression->new($self, '(int)(((int *)$x)+1)');
 
   my $e = Boot0GDB::Expression->new($self, '$x?$y:$z');
 
-  warn "e $e";
   my $i = 0;
   my $out = $e->print_with_callback(\$i, sub { return; }, 0);
 
-  warn "out $out";
+  $self->read_type('struct type');
+  $self->read_type('struct main_type');
+  $self->read_type('struct expression');
+  $self->read_type('struct macro_definition');
 
-  warn $self->execute_command_to_string("p (int)(((int *)0)+1)", 0);
+  # $self->execute_command_to_string('p $x0 = 0');
+  # $self->execute_command_to_string('p $x1 = 0');
+  # $self->execute_command_to_string('p $x2 = 0');
+  # $self->execute_command_to_string('p $x3 = 0');
+  # $self->execute_command_to_string('p $x4 = 0');
+  # $self->execute_command_to_string('p $x5 = 0');
+
+  warn "collecting macros";
+  my @macros = $self->macro_names;
+
+  for my $macro (grep { $_ =~ /^TYPE_/ } sort @macros) {
+    warn "handling macro $macro";
+    $self->guess_macro_type($macro);
+  }
 
   return $self;
 }
 
 package FFI::Platypus::GDB;
+
+sub fragment($) {
+  warn $_[0];
+  return $_[0];
+}
 
 use strict;
 use warnings;
@@ -855,9 +1060,6 @@ use a hacked/fixed version of GDB for now.
 use IPC::Run qw(start);
 use FFI::Platypus;
 
-sub fragment($) {
-}
-
 sub wait_for_prompt {
   my ($self) = @_;
   until ($self->{out} =~ /\(gdb\) $/) {
@@ -883,7 +1085,7 @@ sub run_command {
 sub handle_type {
   my ($self, $name) = @_;
 
-  my $eval = $self->run_command("py print print_type('$name')");
+  my $eval = $self->execute_command_to_string("py print print_type('$name')");
   my $ffi = $self->{ffi};
 
   eval $eval;
@@ -1018,7 +1220,7 @@ sub handle_symbol {
     }
   }
 
-  my $eval = $self->run_command($symbol ? "py print print_symbol_type('$name')" : "py print print_type('$name')");
+  my $eval = $self->execute_command_to_string($symbol ? "py print print_symbol_type('$name')" : "py print print_type('$name')");
 
 
   my $def = sub {
@@ -1126,114 +1328,11 @@ sub handle_symbol {
   return $self;
 }
 
-use Data::Dumper;
-
-sub read_type
-{
-  my($self, $name) = @_;
-
-  $self->{types} = {} unless $self->{types};
-
-  my %t = %{GDBType->ops($self->{types})};
-  my $def = sub { $_[1]->{name} = $_[0]; $self->{types}->{$_[0]} = $_[1]; return $_[1]; };
-
-  my $eval = $self->run_command("py print print_type('$name')");
-
-  return $self if $eval eq "";
-
-  my $t = eval fragment $eval;
-
-  die $@ if $@;
-
-  print $t->describe;
-
-  return $self;
-}
-
-sub read_type_expression
-{
-  my($self, $name) = @_;
-
-  $self->{types} = {} unless $self->{types};
-
-  my $expr = sub { $_[1]->{name} = $_[0]; $self->{types}->{$_[0]} = $_[1]; return $_[1]; };
-
-  my %e = (OP_TYPE => sub { $_[0]->{type} });
-  my %t = %{GDBType->ops($self->{types})};
-  my $def = sub { $_[1]->{name} = $_[0]; $self->{types}->{$_[0]} = $_[1]; return $_[1]; };
-
-  my $eval = $self->run_command("py print print_expression('$name')");
-
-  return $self if $eval eq "";
-
-  my $t = eval fragment $eval;
-
-  die $@ if $@;
-
-  print $t->describe;
-
-  return $self;
-}
-
-sub guess_macro_type
-{
-  my ($self, $macro, $linespec, $input_type) = @_;
-  my $internals = {};
-
-  my %e = %{PartialType->ops($internals)};
-  my %t = %{GDBType->ops($self->{types})};
-
-  my $expr = $self->run_command("py print print_macro('$macro', '$linespec')");
-
-  return $self if $expr eq "";
-
-  my $partial_type = eval fragment $expr;
-
-  die $@ if $@;
-
-  print Dumper($partial_type);
-  print $partial_type->describe;
-
-  for my $name (keys %{$internals}) {
-    print "\n\n";
-
-    print Dumper($internals->{$name});
-    print $internals->{$name}->describe;
-  }
-
-  for my $internal (keys %{$internals}) {
-    my @potential_types;
-    for my $type (keys %{$self->{types}}) {
-      next if $self->{types}->{$type}->{kind} eq 'name';
-
-      my $matches =  $internals->{$internal}->match($self->{types}->{$type});
-
-      $matches = 'undef' unless defined $matches;
-
-      print "$internal matches $type: " . $matches . "\n";
-
-      push @potential_types, $self->{types}->{$type} if $matches eq 'undef';
-    }
-
-    for my $type (@potential_types) {
-      # this looks C-specific, but it's actually not, as long as we
-      # set language to c and back afterwards. A better solution is on
-      # its way, though.
-      $self->run_command("p \$"."$internal = typeof(" . $type->{name}. ")");
-
-      my $expr = $self->run_command("py print print_macro_type('$macro', '$linespec')");
-
-    }
-  }
-
-  return $self;
-}
-
 sub handle_macro
 {
   my ($self, $macro, $linespec, $input_type) = @_;
 
-  my $expr = $self->run_command("py print print_macro('$macro', '$linespec')");
+  my $expr = $self->execute_command_to_string("py print print_macro('$macro', '$linespec')");
 
   return $self if $expr eq "";
 
@@ -1253,7 +1352,7 @@ sub new {
 
   $self->wait_for_prompt;
   $self->{out} = "";
-  $self->run_command("py exec file('/home/pip/git/FFI-Platypus/share/gdb/perlify-expressions.py')");
+  $self->execute_command_to_string("py exec file('/home/pip/git/FFI-Platypus/share/gdb/perlify-expressions.py')");
 
   FFI::Platypus::GDB::GDBExpression->init($self);
 
@@ -1262,8 +1361,8 @@ sub new {
 
 if (0) {
   my $gdb = FFI::Platypus::GDB->new;
-  $gdb->run_command("b main");
-  $gdb->run_command("run");
+  $gdb->execute_command_to_string("b main");
+  $gdb->execute_command_to_string("run");
   $gdb->read_type('struct type');
   $gdb->read_type('struct main_type');
   $gdb->read_type_expression('struct type *');
